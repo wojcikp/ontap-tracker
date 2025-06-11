@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/gocolly/colly"
@@ -13,9 +14,7 @@ type Tracker interface {
 	FetchBarsInWarsaw() []Bar
 }
 
-type CollyTracker struct {
-	colly *colly.Collector
-}
+type CollyTracker struct{}
 
 type Bar struct {
 	Name  string
@@ -29,24 +28,29 @@ type Beer struct {
 }
 
 func NewCollyTracker() *CollyTracker {
-	c := colly.NewCollector(colly.AllowedDomains())
-	return &CollyTracker{c}
+	return &CollyTracker{}
+}
+
+func (ct CollyTracker) newCollector() *colly.Collector {
+	return colly.NewCollector(colly.AllowedDomains())
 }
 
 func (ct CollyTracker) FetchBarsInWarsaw() ([]Bar, error) {
 	var bars []Bar
 	var e error
 
-	ct.colly.OnError(func(_ *colly.Response, err error) {
+	c := ct.newCollector()
+
+	c.OnError(func(_ *colly.Response, err error) {
 		e = err
 		log.Print("Something went wrong: ", err)
 	})
 
-	ct.colly.OnResponse(func(r *colly.Response) {
+	c.OnResponse(func(r *colly.Response) {
 		fmt.Println("Page visited: ", r.Request.URL)
 	})
 
-	ct.colly.OnHTML("div.panel.panel-default.text-center", func(e *colly.HTMLElement) {
+	c.OnHTML("div.panel.panel-default.text-center", func(e *colly.HTMLElement) {
 		name := strings.Split(strings.Replace(strings.ReplaceAll(strings.TrimPrefix(e.Text, "\n"), "\t", ""), "\n\n", "", -1), "\n")[0]
 		var url string
 
@@ -59,11 +63,11 @@ func (ct CollyTracker) FetchBarsInWarsaw() ([]Bar, error) {
 		bars = append(bars, Bar{name, url, &[]Beer{}})
 	})
 
-	ct.colly.OnScraped(func(r *colly.Response) {
+	c.OnScraped(func(r *colly.Response) {
 		fmt.Println(r.Request.URL, " scraped!")
 	})
 
-	ct.colly.Visit("https://ontap.pl/warszawa/multitaps")
+	c.Visit("https://ontap.pl/warszawa/multitaps")
 
 	if e != nil {
 		return []Bar{}, e
@@ -71,20 +75,23 @@ func (ct CollyTracker) FetchBarsInWarsaw() ([]Bar, error) {
 	return bars, nil
 }
 
-func (ct CollyTracker) FetchBeersInfo(bar *Bar) error {
+func (ct CollyTracker) FetchBeersInfo(wg *sync.WaitGroup, bar *Bar) error {
+	defer wg.Done()
 	var e error
 	var name, prices string
 
-	ct.colly.OnError(func(_ *colly.Response, err error) {
+	c := ct.newCollector()
+
+	c.OnError(func(_ *colly.Response, err error) {
 		e = err
 		log.Print("Something went wrong: ", err)
 	})
 
-	ct.colly.OnResponse(func(r *colly.Response) {
+	c.OnResponse(func(r *colly.Response) {
 		fmt.Println("Page visited: ", r.Request.URL)
 	})
 
-	ct.colly.OnHTML("div.panel.panel-default", func(e *colly.HTMLElement) {
+	c.OnHTML("div.panel.panel-default", func(e *colly.HTMLElement) {
 		e.DOM.Find("h4.cml_shadow").Each(func(_ int, s *goquery.Selection) {
 			name = strings.ReplaceAll(strings.ReplaceAll(s.Text(), "\n", ""), "\t", "")
 		})
@@ -94,11 +101,11 @@ func (ct CollyTracker) FetchBeersInfo(bar *Bar) error {
 		*bar.Beers = append(*bar.Beers, Beer{name, prices})
 	})
 
-	ct.colly.OnScraped(func(r *colly.Response) {
+	c.OnScraped(func(r *colly.Response) {
 		fmt.Println(r.Request.URL, " scraped!")
 	})
 
-	ct.colly.Visit(bar.Url)
+	c.Visit(bar.Url)
 
 	return e
 }
