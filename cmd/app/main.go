@@ -11,9 +11,9 @@ func main() {
 	ontapScrapper := tracker.NewCollyTracker()
 	bars, _ := ontapScrapper.FetchBarsInWarsaw()
 	wg := &sync.WaitGroup{}
-	wg.Add(3)
-	for _, bar := range bars[len(bars)-3:] {
-		ontapScrapper.FetchBeersInfo(wg, &bar)
+	wg.Add(len(bars))
+	for _, bar := range bars {
+		go ontapScrapper.FetchBeersInfo(wg, &bar)
 	}
 
 	wg.Wait()

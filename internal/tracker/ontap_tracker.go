@@ -37,17 +37,13 @@ func (ct CollyTracker) newCollector() *colly.Collector {
 
 func (ct CollyTracker) FetchBarsInWarsaw() ([]Bar, error) {
 	var bars []Bar
-	var e error
+	var scrapeErr error
 
 	c := ct.newCollector()
 
 	c.OnError(func(_ *colly.Response, err error) {
-		e = err
+		scrapeErr = err
 		log.Print("Something went wrong: ", err)
-	})
-
-	c.OnResponse(func(r *colly.Response) {
-		fmt.Println("Page visited: ", r.Request.URL)
 	})
 
 	c.OnHTML("div.panel.panel-default.text-center", func(e *colly.HTMLElement) {
@@ -60,52 +56,63 @@ func (ct CollyTracker) FetchBarsInWarsaw() ([]Bar, error) {
 				url = e.Request.AbsoluteURL(href)
 			}
 		})
-		bars = append(bars, Bar{name, url, &[]Beer{}})
+		bars = append(bars, Bar{
+			Name:  name,
+			Url:   url,
+			Beers: &[]Beer{},
+		})
 	})
 
 	c.OnScraped(func(r *colly.Response) {
 		fmt.Println(r.Request.URL, " scraped!")
 	})
 
-	c.Visit("https://ontap.pl/warszawa/multitaps")
+	if err := c.Visit("https://ontap.pl/warszawa/multitaps"); err != nil {
+		return nil, err
+	}
 
-	if e != nil {
-		return []Bar{}, e
+	if scrapeErr != nil {
+		return nil, scrapeErr
 	}
 	return bars, nil
 }
 
 func (ct CollyTracker) FetchBeersInfo(wg *sync.WaitGroup, bar *Bar) error {
 	defer wg.Done()
-	var e error
-	var name, prices string
+
+	var beers []Beer
+	var scrapeErr error
 
 	c := ct.newCollector()
 
 	c.OnError(func(_ *colly.Response, err error) {
-		e = err
+		scrapeErr = err
 		log.Print("Something went wrong: ", err)
 	})
 
-	c.OnResponse(func(r *colly.Response) {
-		fmt.Println("Page visited: ", r.Request.URL)
-	})
-
 	c.OnHTML("div.panel.panel-default", func(e *colly.HTMLElement) {
+		var name, prices string
 		e.DOM.Find("h4.cml_shadow").Each(func(_ int, s *goquery.Selection) {
 			name = strings.ReplaceAll(strings.ReplaceAll(s.Text(), "\n", ""), "\t", "")
 		})
 		e.DOM.Find("div.col-xs-7").Each(func(_ int, s *goquery.Selection) {
 			prices = strings.ReplaceAll(strings.ReplaceAll(s.Text(), "\n", ""), "\t", "")
 		})
-		*bar.Beers = append(*bar.Beers, Beer{name, prices})
+		beers = append(beers, Beer{
+			Name:   name,
+			Prices: prices,
+		})
 	})
 
 	c.OnScraped(func(r *colly.Response) {
 		fmt.Println(r.Request.URL, " scraped!")
 	})
 
-	c.Visit(bar.Url)
+	if err := c.Visit(bar.Url); err != nil {
+		return err
+	}
 
-	return e
+	*bar.Beers = beers
+
+	return scrapeErr
 }
