@@ -3,12 +3,15 @@ package tracker
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/gocolly/colly"
 )
+
+const PriceLimit = 18
 
 type Tracker interface {
 	FetchBarsInWarsaw() []Bar
@@ -17,9 +20,10 @@ type Tracker interface {
 type CollyTracker struct{}
 
 type Bar struct {
-	Name  string
-	Url   string
-	Beers *[]Beer
+	Name      string
+	Url       string
+	Beers     *[]Beer
+	ScrapeErr error
 }
 
 type Beer struct {
@@ -63,10 +67,6 @@ func (ct CollyTracker) FetchBarsInWarsaw() ([]Bar, error) {
 		})
 	})
 
-	c.OnScraped(func(r *colly.Response) {
-		fmt.Println(r.Request.URL, " scraped!")
-	})
-
 	if err := c.Visit("https://ontap.pl/warszawa/multitaps"); err != nil {
 		return nil, err
 	}
@@ -77,16 +77,15 @@ func (ct CollyTracker) FetchBarsInWarsaw() ([]Bar, error) {
 	return bars, nil
 }
 
-func (ct CollyTracker) FetchBeersInfo(wg *sync.WaitGroup, bar *Bar) error {
+func (ct CollyTracker) FetchBeersInfo(wg *sync.WaitGroup, bar *Bar) {
 	defer wg.Done()
 
 	var beers []Beer
-	var scrapeErr error
 
 	c := ct.newCollector()
 
 	c.OnError(func(_ *colly.Response, err error) {
-		scrapeErr = err
+		bar.ScrapeErr = err
 		log.Print("Something went wrong: ", err)
 	})
 
@@ -105,14 +104,32 @@ func (ct CollyTracker) FetchBeersInfo(wg *sync.WaitGroup, bar *Bar) error {
 	})
 
 	c.OnScraped(func(r *colly.Response) {
-		fmt.Println(r.Request.URL, " scraped!")
+		*bar.Beers = beers
 	})
 
 	if err := c.Visit(bar.Url); err != nil {
-		return err
+		bar.ScrapeErr = err
 	}
+}
 
-	*bar.Beers = beers
-
-	return scrapeErr
+func (b Bar) SearchForYummyAndWellPricedBeers() ([]Beer, error) {
+	var wellPricedBeers []Beer
+	var searchErrors []error
+	for _, beer := range *b.Beers {
+		for _, priceStr := range strings.Split(beer.Prices, " · ") {
+			if strings.Contains(priceStr, "0.5l:") {
+				price, err := strconv.Atoi(strings.Replace(strings.Split(priceStr, ": ")[1], "zł", "", 1))
+				if err != nil {
+					searchErrors = append(searchErrors, err)
+				}
+				if price < PriceLimit {
+					wellPricedBeers = append(wellPricedBeers, beer)
+				}
+			}
+		}
+	}
+	if len(searchErrors) > 0 {
+		return nil, fmt.Errorf("errors occured during search for well priced beers: %v", searchErrors)
+	}
+	return wellPricedBeers, nil
 }
