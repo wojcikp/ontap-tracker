@@ -31,6 +31,13 @@ type Beer struct {
 	Prices string
 }
 
+type BarWithWellPricedBeers struct {
+	Bar     string  `json:bar`
+	Address string  `json:adres`
+	Beers   []Beer  `json:piwa`
+	Errors  []error `json:errors`
+}
+
 func NewCollyTracker() *CollyTracker {
 	return &CollyTracker{}
 }
@@ -110,6 +117,47 @@ func (ct CollyTracker) FetchBeersInfo(wg *sync.WaitGroup, bar *Bar) {
 	if err := c.Visit(bar.Url); err != nil {
 		bar.ScrapeErr = err
 	}
+}
+
+func (ct CollyTracker) GetBeersInfo() ([]BarWithWellPricedBeers, error) {
+	var barsWithGoodPrices []BarWithWellPricedBeers
+
+	bars, err := ct.FetchBarsInWarsaw()
+	if err != nil {
+		return nil, err
+	}
+
+	wg := &sync.WaitGroup{}
+	wg.Add(len(bars))
+	for _, bar := range bars {
+		go ct.FetchBeersInfo(wg, &bar)
+	}
+	wg.Wait()
+
+	for _, bar := range bars {
+		var errors []error
+		beerInfo := BarWithWellPricedBeers{Bar: bar.Name, Address: "ul. testowa 999"}
+		if bar.ScrapeErr != nil {
+			log.Printf("Scrape error in bar: %s \nERROR: %v", bar.Name, bar.ScrapeErr)
+			errors = append(errors, bar.ScrapeErr)
+		}
+		beers, err := bar.SearchForYummyAndWellPricedBeers()
+		if err != nil {
+			log.Printf("Searching for best priced beers error: %v", err)
+			errors = append(errors, err)
+		}
+		if len(errors) > 0 {
+			beerInfo.Errors = errors
+		}
+		if len(beers) > 0 {
+			beerInfo.Beers = beers
+		}
+		if len(beers) > 0 || len(errors) > 0 {
+			barsWithGoodPrices = append(barsWithGoodPrices, beerInfo)
+		}
+	}
+
+	return barsWithGoodPrices, nil
 }
 
 func (b Bar) SearchForYummyAndWellPricedBeers() ([]Beer, error) {
