@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -23,7 +24,7 @@ func NewServer(port string) *Server {
 func (s *Server) Run() {
 	h := handlers.CORS(
 		// handlers.AllowedOrigins([]string{"http://localhost:8080"}),
-		handlers.AllowedMethods([]string{"GET", "POST", "PUT", "DELETE"}),
+		handlers.AllowedMethods([]string{"GET"}),
 		handlers.AllowedHeaders([]string{"Content-Type", "application/json"}),
 	)(s.Router)
 
@@ -38,7 +39,14 @@ func (s *Server) scrapHandler(w http.ResponseWriter, r *http.Request) {
 	tracker := tracker.NewCollyTracker()
 	beersInfo, err := tracker.GetBeersInfo()
 	if err != nil {
-		json.NewEncoder(w).Encode(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(err.Error())
 	}
-	json.NewEncoder(w).Encode(beersInfo)
+	if len(beersInfo) > 0 {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(beersInfo)
+	} else {
+		w.WriteHeader(http.StatusNoContent)
+		json.NewEncoder(w).Encode("No well priced beers found")
+	}
 }

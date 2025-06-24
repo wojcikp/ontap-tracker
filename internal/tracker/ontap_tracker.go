@@ -32,10 +32,10 @@ type Beer struct {
 }
 
 type BarWithWellPricedBeers struct {
-	Bar     string  `json:bar`
-	Address string  `json:adres`
-	Beers   []Beer  `json:piwa`
-	Errors  []error `json:errors`
+	Bar     string   `json:bar`
+	Address string   `json:adres`
+	Beers   []Beer   `json:piwa`
+	Errors  []string `json:errors`
 }
 
 func NewCollyTracker() *CollyTracker {
@@ -135,16 +135,16 @@ func (ct CollyTracker) GetBeersInfo() ([]BarWithWellPricedBeers, error) {
 	wg.Wait()
 
 	for _, bar := range bars {
-		var errors []error
+		var errors []string
 		beerInfo := BarWithWellPricedBeers{Bar: bar.Name, Address: "ul. testowa 999"}
 		if bar.ScrapeErr != nil {
 			log.Printf("Scrape error in bar: %s \nERROR: %v", bar.Name, bar.ScrapeErr)
-			errors = append(errors, bar.ScrapeErr)
+			errors = append(errors, bar.ScrapeErr.Error())
 		}
 		beers, err := bar.SearchForYummyAndWellPricedBeers()
 		if err != nil {
 			log.Printf("Searching for best priced beers error: %v", err)
-			errors = append(errors, err)
+			errors = append(errors, err.Error())
 		}
 		if len(errors) > 0 {
 			beerInfo.Errors = errors
