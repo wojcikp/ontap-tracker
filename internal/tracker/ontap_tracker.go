@@ -11,8 +11,6 @@ import (
 	"github.com/gocolly/colly"
 )
 
-const PriceLimit = 18
-
 type Tracker interface {
 	FetchBarsInWarsaw() []Bar
 }
@@ -119,7 +117,7 @@ func (ct CollyTracker) FetchBeersInfo(wg *sync.WaitGroup, bar *Bar) {
 	}
 }
 
-func (ct CollyTracker) GetBeersInfo() ([]BarWithWellPricedBeers, error) {
+func (ct CollyTracker) GetBeersInfo(priceLimit int) ([]BarWithWellPricedBeers, error) {
 	var barsWithGoodPrices []BarWithWellPricedBeers
 
 	bars, err := ct.FetchBarsInWarsaw()
@@ -141,7 +139,7 @@ func (ct CollyTracker) GetBeersInfo() ([]BarWithWellPricedBeers, error) {
 			log.Printf("Scrape error in bar: %s \nERROR: %v", bar.Name, bar.ScrapeErr)
 			errors = append(errors, bar.ScrapeErr.Error())
 		}
-		beers, err := bar.SearchForYummyAndWellPricedBeers()
+		beers, err := bar.SearchForYummyAndWellPricedBeers(priceLimit)
 		if err != nil {
 			log.Printf("Searching for best priced beers error: %v", err)
 			errors = append(errors, err.Error())
@@ -160,7 +158,7 @@ func (ct CollyTracker) GetBeersInfo() ([]BarWithWellPricedBeers, error) {
 	return barsWithGoodPrices, nil
 }
 
-func (b Bar) SearchForYummyAndWellPricedBeers() ([]Beer, error) {
+func (b Bar) SearchForYummyAndWellPricedBeers(priceLimit int) ([]Beer, error) {
 	var wellPricedBeers []Beer
 	var searchErrors []error
 	for _, beer := range *b.Beers {
@@ -170,7 +168,7 @@ func (b Bar) SearchForYummyAndWellPricedBeers() ([]Beer, error) {
 				if err != nil {
 					searchErrors = append(searchErrors, err)
 				}
-				if price < PriceLimit {
+				if price < priceLimit {
 					wellPricedBeers = append(wellPricedBeers, beer)
 				}
 			}

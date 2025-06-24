@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
@@ -28,7 +29,7 @@ func (s *Server) Run() {
 		handlers.AllowedHeaders([]string{"Content-Type", "application/json"}),
 	)(s.Router)
 
-	s.Router.HandleFunc("/scrap", s.scrapHandler).Methods("GET")
+	s.Router.HandleFunc("/beers", s.scrapHandler).Methods("GET")
 
 	p := fmt.Sprint(":", s.Port)
 	log.Printf("Server running on http://localhost%s", p)
@@ -36,8 +37,17 @@ func (s *Server) Run() {
 }
 
 func (s *Server) scrapHandler(w http.ResponseWriter, r *http.Request) {
+	priceLimit := r.URL.Query().Get("price")
+	if priceLimit == "" {
+		priceLimit = "18"
+	}
+	numericalPriceLimit, err := strconv.Atoi(priceLimit)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(err.Error())
+	}
 	tracker := tracker.NewCollyTracker()
-	beersInfo, err := tracker.GetBeersInfo()
+	beersInfo, err := tracker.GetBeersInfo(numericalPriceLimit)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(err.Error())
