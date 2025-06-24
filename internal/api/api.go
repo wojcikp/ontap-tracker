@@ -29,8 +29,9 @@ func (s *Server) Run() {
 
 	s.Router.HandleFunc("/scrap", s.scrapHandler).Methods("GET")
 
-	log.Print("Server running on http://localhost:3000")
-	http.ListenAndServe(":3000", h)
+	p := fmt.Sprint(":", s.Port)
+	log.Printf("Server running on http://localhost%s", p)
+	http.ListenAndServe(p, h)
 }
 
 func (s *Server) scrapHandler(w http.ResponseWriter, r *http.Request) {
