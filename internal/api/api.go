@@ -12,6 +12,8 @@ import (
 	"github.com/wojcikp/ontap-tracker/internal/tracker"
 )
 
+const DefaultPriceLimit = "18"
+
 type Server struct {
 	Port   string
 	Router *mux.Router
@@ -39,7 +41,7 @@ func (s *Server) Run() {
 func (s *Server) scrapHandler(w http.ResponseWriter, r *http.Request) {
 	priceLimit := r.URL.Query().Get("price")
 	if priceLimit == "" {
-		priceLimit = "18"
+		priceLimit = DefaultPriceLimit
 	}
 	numericalPriceLimit, err := strconv.Atoi(priceLimit)
 	if err != nil {
