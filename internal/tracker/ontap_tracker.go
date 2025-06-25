@@ -14,16 +14,17 @@ import (
 type CollyTracker struct{}
 
 type Bar struct {
-	Name      string `json:"bar"`
-	Address   string `json:"adres"`
-	Url       string `json:"url"`
-	Beers     []Beer `json:"piwa"`
-	ScrapeErr error  `json:"errors"`
+	Name         string  `json:"bar"`
+	Address      string  `json:"adres"`
+	Url          string  `json:"url"`
+	Beers        []Beer  `json:"piwa"`
+	ScrapeErrors []error `json:"errors"`
 }
 
 type Beer struct {
-	Name   string
-	Prices string
+	Name              string
+	Prices            string
+	PriceForHalfLiter int
 }
 
 func NewCollyTracker() *CollyTracker {
@@ -55,7 +56,7 @@ func (ct CollyTracker) GetBarsWithWellPricedBeers(priceLimit int) ([]Bar, error)
 	}()
 
 	for bar := range bars {
-		beers, err := bar.SearchForWellPricedBeers(priceLimit, bar)
+		beers, err := bar.SearchForWellPricedBeers(priceLimit)
 		if err != nil {
 			log.Print("ERROR during searching for well priced beers: ", err)
 			return []Bar{}, err
@@ -67,6 +68,47 @@ func (ct CollyTracker) GetBarsWithWellPricedBeers(priceLimit int) ([]Bar, error)
 	}
 
 	return barsWithWellPricedBeers, nil
+}
+
+func (ct CollyTracker) GetBeerWithLowestPrice() ([]Beer, error) {
+	bars := make(chan Bar)
+	barsUrls, err := ct.FetchBarsUrls()
+	if err != nil {
+		log.Print("ERROR during fetching bars urls: ", err)
+		return []Beer{}, err
+	}
+
+	wg := &sync.WaitGroup{}
+	for _, url := range barsUrls {
+		wg.Add(1)
+		go ct.FetchBarInfo(wg, url, bars)
+	}
+
+	go func() {
+		wg.Wait()
+		close(bars)
+	}()
+
+	var allBeers []Beer
+	for bar := range bars {
+		allBeers = append(allBeers, bar.Beers...)
+	}
+
+	cheapestBeer, err := SearchForBeerWithLowestPrice(allBeers)
+	if err != nil {
+		return []Beer{}, fmt.Errorf("error occured during searching for lowest price beer: %w", err)
+	}
+
+	var cheapestBeersInBars []Beer
+	cheapestBeersInBars = append(cheapestBeersInBars, cheapestBeer)
+
+	for _, beer := range allBeers {
+		if beer.PriceForHalfLiter == cheapestBeer.PriceForHalfLiter && beer != cheapestBeer {
+			cheapestBeersInBars = append(cheapestBeersInBars, beer)
+		}
+	}
+
+	return cheapestBeersInBars, nil
 }
 
 func (ct CollyTracker) FetchBarsUrls() ([]string, error) {
@@ -106,12 +148,12 @@ func (ct CollyTracker) FetchBarInfo(wg *sync.WaitGroup, barUrl string, bar chan 
 	defer wg.Done()
 	var name, address string
 	var beers []Beer
-	var scrapeErr error
+	var scrapeErrors []error
 
 	c := ct.newCollector()
 
 	c.OnError(func(_ *colly.Response, err error) {
-		scrapeErr = err
+		scrapeErrors = append(scrapeErrors, err)
 		log.Print("Something went wrong: ", err)
 	})
 
@@ -127,9 +169,14 @@ func (ct CollyTracker) FetchBarInfo(wg *sync.WaitGroup, barUrl string, bar chan 
 		e.DOM.Find("div.col-xs-7").Each(func(_ int, s *goquery.Selection) {
 			prices = strings.ReplaceAll(strings.ReplaceAll(s.Text(), "\n", ""), "\t", "")
 		})
+		priceForHalfLiter, err := GetBeerPrice(prices)
+		if err != nil {
+			scrapeErrors = append(scrapeErrors, err)
+		}
 		beers = append(beers, Beer{
-			Name:   beerName,
-			Prices: prices,
+			Name:              beerName,
+			Prices:            prices,
+			PriceForHalfLiter: priceForHalfLiter,
 		})
 	})
 
@@ -145,32 +192,52 @@ func (ct CollyTracker) FetchBarInfo(wg *sync.WaitGroup, barUrl string, bar chan 
 	})
 
 	c.OnScraped(func(r *colly.Response) {
-		bar <- Bar{name, address, barUrl, beers, scrapeErr}
+		bar <- Bar{name, address, barUrl, beers, scrapeErrors}
 	})
 
 	if err := c.Visit(barUrl); err != nil {
-		scrapeErr = err
+		scrapeErrors = append(scrapeErrors, err)
 	}
 }
 
-func (b Bar) SearchForWellPricedBeers(priceLimit int, bar Bar) ([]Beer, error) {
+func (b Bar) SearchForWellPricedBeers(priceLimit int) ([]Beer, error) {
 	var wellPricedBeers []Beer
 	var searchErrors []error
-	for _, beer := range bar.Beers {
-		for _, priceStr := range strings.Split(beer.Prices, " · ") {
-			if strings.Contains(priceStr, "0.5l:") {
-				price, err := strconv.Atoi(strings.Replace(strings.Split(priceStr, ": ")[1], "zł", "", 1))
-				if err != nil {
-					searchErrors = append(searchErrors, err)
-				}
-				if price < priceLimit {
-					wellPricedBeers = append(wellPricedBeers, beer)
-				}
-			}
+	for _, beer := range b.Beers {
+		if beer.PriceForHalfLiter < priceLimit && beer.PriceForHalfLiter > 0 {
+			wellPricedBeers = append(wellPricedBeers, beer)
 		}
 	}
 	if len(searchErrors) > 0 {
 		return nil, fmt.Errorf("errors occured during search for well priced beers: %v", searchErrors)
 	}
 	return wellPricedBeers, nil
+}
+
+func SearchForBeerWithLowestPrice(beers []Beer) (Beer, error) {
+	lowestPriceBeer := beers[0]
+	var searchErrors []error
+	for _, beer := range beers {
+		if beer.PriceForHalfLiter < lowestPriceBeer.PriceForHalfLiter && beer.PriceForHalfLiter > 0 {
+			lowestPriceBeer = beer
+		}
+	}
+	if len(searchErrors) > 0 {
+		return Beer{}, fmt.Errorf("errors occured during search for lowest priced beers: %v", searchErrors)
+	}
+	return lowestPriceBeer, nil
+}
+
+func GetBeerPrice(prices string) (int, error) {
+	var price int
+	var err error
+	for _, priceStr := range strings.Split(prices, " · ") {
+		if strings.Contains(priceStr, "0.5l:") {
+			price, err = strconv.Atoi(strings.Replace(strings.Split(priceStr, ": ")[1], "zł", "", 1))
+			if err != nil {
+				return price, err
+			}
+		}
+	}
+	return price, nil
 }

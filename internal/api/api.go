@@ -31,14 +31,15 @@ func (s *Server) Run() {
 		handlers.AllowedHeaders([]string{"Content-Type", "application/json"}),
 	)(s.Router)
 
-	s.Router.HandleFunc("/simple", s.simpleHandler).Methods("GET")
+	s.Router.HandleFunc("/beers", s.scrapHandler).Methods("GET")
+	s.Router.HandleFunc("/lowest", s.lowestPriceHandler).Methods("GET")
 
 	p := fmt.Sprint(":", s.Port)
 	log.Printf("Server running on http://localhost%s", p)
 	http.ListenAndServe(p, h)
 }
 
-func (s *Server) simpleHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) scrapHandler(w http.ResponseWriter, r *http.Request) {
 	priceLimit := r.URL.Query().Get("price")
 	if priceLimit == "" {
 		priceLimit = DefaultPriceLimit
@@ -56,4 +57,15 @@ func (s *Server) simpleHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(bars)
+}
+
+func (s *Server) lowestPriceHandler(w http.ResponseWriter, r *http.Request) {
+	t := tracker.NewCollyTracker()
+	b, err := t.GetBeerWithLowestPrice()
+	if err != nil {
+		log.Print(err)
+		json.NewEncoder(w).Encode(err)
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(b)
 }
