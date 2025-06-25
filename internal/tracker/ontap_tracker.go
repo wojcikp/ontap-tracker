@@ -11,30 +11,19 @@ import (
 	"github.com/gocolly/colly"
 )
 
-type Tracker interface {
-	FetchBarsInWarsaw() []Bar
-}
-
 type CollyTracker struct{}
 
 type Bar struct {
-	Name      string
-	Address   *string
-	Url       string
-	Beers     *[]Beer
-	ScrapeErr error
+	Name      string `json:"bar"`
+	Address   string `json:"adres"`
+	Url       string `json:"url"`
+	Beers     []Beer `json:"piwa"`
+	ScrapeErr error  `json:"errors"`
 }
 
 type Beer struct {
 	Name   string
 	Prices string
-}
-
-type BarWithWellPricedBeers struct {
-	Bar     string   `json:"bar"`
-	Address string   `json:"adres"`
-	Beers   []Beer   `json:"piwa"`
-	Errors  []string `json:"errors"`
 }
 
 func NewCollyTracker() *CollyTracker {
@@ -45,8 +34,43 @@ func (ct CollyTracker) newCollector() *colly.Collector {
 	return colly.NewCollector(colly.AllowedDomains())
 }
 
-func (ct CollyTracker) FetchBarsInWarsaw() ([]Bar, error) {
-	var bars []Bar
+func (ct CollyTracker) GetBarsWithWellPricedBeers(priceLimit int) ([]Bar, error) {
+	var barsWithWellPricedBeers []Bar
+	bars := make(chan Bar)
+	barsUrls, err := ct.FetchBarsUrls()
+	if err != nil {
+		log.Print("ERROR during fetching bars urls: ", err)
+		return []Bar{}, err
+	}
+
+	wg := &sync.WaitGroup{}
+	for _, url := range barsUrls {
+		wg.Add(1)
+		go ct.FetchBarInfo(wg, url, bars)
+	}
+
+	go func() {
+		wg.Wait()
+		close(bars)
+	}()
+
+	for bar := range bars {
+		beers, err := bar.SearchForWellPricedBeers(priceLimit, bar)
+		if err != nil {
+			log.Print("ERROR during searching for well priced beers: ", err)
+			return []Bar{}, err
+		}
+		if len(beers) > 0 {
+			bar.Beers = beers
+			barsWithWellPricedBeers = append(barsWithWellPricedBeers, bar)
+		}
+	}
+
+	return barsWithWellPricedBeers, nil
+}
+
+func (ct CollyTracker) FetchBarsUrls() ([]string, error) {
+	var urls []string
 	var scrapeErr error
 
 	c := ct.newCollector()
@@ -57,9 +81,7 @@ func (ct CollyTracker) FetchBarsInWarsaw() ([]Bar, error) {
 	})
 
 	c.OnHTML("div.panel.panel-default.text-center", func(e *colly.HTMLElement) {
-		name := strings.Split(strings.Replace(strings.ReplaceAll(strings.TrimPrefix(e.Text, "\n"), "\t", ""), "\n\n", "", -1), "\n")[0]
 		var url string
-		var address string
 
 		e.DOM.Find("a").Each(func(_ int, s *goquery.Selection) {
 			href, exists := s.Attr("href")
@@ -67,12 +89,7 @@ func (ct CollyTracker) FetchBarsInWarsaw() ([]Bar, error) {
 				url = e.Request.AbsoluteURL(href)
 			}
 		})
-		bars = append(bars, Bar{
-			Name:    name,
-			Url:     url,
-			Beers:   &[]Beer{},
-			Address: &address,
-		})
+		urls = append(urls, url)
 	})
 
 	if err := c.Visit("https://ontap.pl/warszawa/multitaps"); err != nil {
@@ -82,32 +99,36 @@ func (ct CollyTracker) FetchBarsInWarsaw() ([]Bar, error) {
 	if scrapeErr != nil {
 		return nil, scrapeErr
 	}
-	return bars, nil
+	return urls, nil
 }
 
-func (ct CollyTracker) FetchBeersInfo(wg *sync.WaitGroup, bar *Bar) {
+func (ct CollyTracker) FetchBarInfo(wg *sync.WaitGroup, barUrl string, bar chan Bar) {
 	defer wg.Done()
-
+	var name, address string
 	var beers []Beer
-	var address string
+	var scrapeErr error
 
 	c := ct.newCollector()
 
 	c.OnError(func(_ *colly.Response, err error) {
-		bar.ScrapeErr = err
+		scrapeErr = err
 		log.Print("Something went wrong: ", err)
 	})
 
+	c.OnHTML("ol.breadcrumb li.active", func(e *colly.HTMLElement) {
+		name = strings.TrimSpace(e.Text)
+	})
+
 	c.OnHTML("div.panel.panel-default", func(e *colly.HTMLElement) {
-		var name, prices string
+		var beerName, prices string
 		e.DOM.Find("h4.cml_shadow").Each(func(_ int, s *goquery.Selection) {
-			name = strings.ReplaceAll(strings.ReplaceAll(s.Text(), "\n", ""), "\t", "")
+			beerName = strings.ReplaceAll(strings.ReplaceAll(s.Text(), "\n", ""), "\t", "")
 		})
 		e.DOM.Find("div.col-xs-7").Each(func(_ int, s *goquery.Selection) {
 			prices = strings.ReplaceAll(strings.ReplaceAll(s.Text(), "\n", ""), "\t", "")
 		})
 		beers = append(beers, Beer{
-			Name:   name,
+			Name:   beerName,
 			Prices: prices,
 		})
 	})
@@ -124,60 +145,18 @@ func (ct CollyTracker) FetchBeersInfo(wg *sync.WaitGroup, bar *Bar) {
 	})
 
 	c.OnScraped(func(r *colly.Response) {
-		*bar.Beers = beers
-		*bar.Address = address
+		bar <- Bar{name, address, barUrl, beers, scrapeErr}
 	})
 
-	if err := c.Visit(bar.Url); err != nil {
-		bar.ScrapeErr = err
+	if err := c.Visit(barUrl); err != nil {
+		scrapeErr = err
 	}
 }
 
-func (ct CollyTracker) SearchBarsWithWellPricedBeers(priceLimit int) ([]BarWithWellPricedBeers, error) {
-	var barsWithGoodPrices []BarWithWellPricedBeers
-
-	bars, err := ct.FetchBarsInWarsaw()
-	if err != nil {
-		return nil, err
-	}
-
-	wg := &sync.WaitGroup{}
-	wg.Add(len(bars))
-	for _, bar := range bars {
-		go ct.FetchBeersInfo(wg, &bar)
-	}
-	wg.Wait()
-
-	for _, bar := range bars {
-		var errors []string
-		beerInfo := BarWithWellPricedBeers{Bar: bar.Name, Address: *bar.Address}
-		if bar.ScrapeErr != nil {
-			log.Printf("Scrape error in bar: %s \nERROR: %v", bar.Name, bar.ScrapeErr)
-			errors = append(errors, bar.ScrapeErr.Error())
-		}
-		beers, err := bar.SearchForYummyAndWellPricedBeers(priceLimit)
-		if err != nil {
-			log.Printf("Searching for best priced beers error: %v", err)
-			errors = append(errors, err.Error())
-		}
-		if len(errors) > 0 {
-			beerInfo.Errors = errors
-		}
-		if len(beers) > 0 {
-			beerInfo.Beers = beers
-		}
-		if len(beers) > 0 || len(errors) > 0 {
-			barsWithGoodPrices = append(barsWithGoodPrices, beerInfo)
-		}
-	}
-
-	return barsWithGoodPrices, nil
-}
-
-func (b Bar) SearchForYummyAndWellPricedBeers(priceLimit int) ([]Beer, error) {
+func (b Bar) SearchForWellPricedBeers(priceLimit int, bar Bar) ([]Beer, error) {
 	var wellPricedBeers []Beer
 	var searchErrors []error
-	for _, beer := range *b.Beers {
+	for _, beer := range bar.Beers {
 		for _, priceStr := range strings.Split(beer.Prices, " · ") {
 			if strings.Contains(priceStr, "0.5l:") {
 				price, err := strconv.Atoi(strings.Replace(strings.Split(priceStr, ": ")[1], "zł", "", 1))
