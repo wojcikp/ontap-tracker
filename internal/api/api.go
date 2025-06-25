@@ -49,7 +49,7 @@ func (s *Server) scrapHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(err.Error())
 	}
 	tracker := tracker.NewCollyTracker()
-	beersInfo, err := tracker.GetBeersInfo(numericalPriceLimit)
+	beersInfo, err := tracker.SearchBarsWithWellPricedBeers(numericalPriceLimit)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(err.Error())

@@ -31,10 +31,10 @@ type Beer struct {
 }
 
 type BarWithWellPricedBeers struct {
-	Bar     string   `json:bar`
-	Address string   `json:adres`
-	Beers   []Beer   `json:piwa`
-	Errors  []string `json:errors`
+	Bar     string   `json:"bar"`
+	Address string   `json:"adres"`
+	Beers   []Beer   `json:"piwa"`
+	Errors  []string `json:"errors"`
 }
 
 func NewCollyTracker() *CollyTracker {
@@ -133,7 +133,7 @@ func (ct CollyTracker) FetchBeersInfo(wg *sync.WaitGroup, bar *Bar) {
 	}
 }
 
-func (ct CollyTracker) GetBeersInfo(priceLimit int) ([]BarWithWellPricedBeers, error) {
+func (ct CollyTracker) SearchBarsWithWellPricedBeers(priceLimit int) ([]BarWithWellPricedBeers, error) {
 	var barsWithGoodPrices []BarWithWellPricedBeers
 
 	bars, err := ct.FetchBarsInWarsaw()
